@@ -1,5 +1,6 @@
 *.swp
 *.so
+*.o
 storedproc/pgsql/c/*.sql
 install_manifest.txt
 log
