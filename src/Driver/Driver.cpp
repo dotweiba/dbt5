@@ -113,6 +113,10 @@ void *customerWorkerThread(void *data)
 
 	osErr << "User thread # " << pthread_self() << " terminated." << endl;
 	pThrParam->pDriver->logErrorMessage(osErr.str());
+	pThrParam->pDriver->m_MixLock.lock();
+	pThrParam->pDriver->m_fMix << (int) time(NULL) << ",TERMINATED,,," <<
+			(long long) pthread_self() << endl;
+	pThrParam->pDriver->m_MixLock.unlock();
 
 	delete pThrParam;
 	return NULL;

@@ -1,162 +1,133 @@
-#!/usr/bin/env python
-
+#!/bin/sh
 #
 # This file is released under the terms of the Artistic License.
 # Please see the file LICENSE, included in this package, for details.
 #
 # Copyright (C) 2006      Open Source Development Labs, Inc.
 #               2006      Rilson Nascimento.
-#               2006-2010 Mark Wong
+#               2006-2014 Mark Wong
+#               2014      2ndQuadrant, Ltd.
 #
 
-import sys
-import os
+if [ $# -ne 1 ]; then
+    echo "usage: `basename $0` <mix.log>"
+    exit 1
+fi
 
-import rpy2.robjects as robjects
-from rpy2.robjects.vectors import DataFrame
+MIXFILE=$1
 
-if len(sys.argv) != 2:
-    print ( 'usage: %s <mix.log>' % sys.argv[0] )
-    sys.exit(1)
+if [ ! -f "${MIXFILE}" ]; then
+	echo "${MIXFILE} not found"
+	exit 1
+fi
 
-filename = sys.argv[1]
+R --slave --no-save << __EOF__
+# Is there an escape error in pipe()? It shouldn't print the START marker line
+# nor the TERMINATED line.
+cmd <- "sed -n '/START/,/TERMINATED/{/START|TERMINATED/!p}' ${MIXFILE}"
+df <- read.csv(pipe(cmd), header=F)
+df <- df[-1,]
+df <- df[-nrow(df),]
 
-if not os.path.exists(filename):
-    print ( 'cannot open file: %s' % filename )
-    sys.exit(1)
+colnames(df)[1] <- 'ctime'
+colnames(df)[2] <- 'txn'
+colnames(df)[3] <- 'status'
+colnames(df)[4] <- 'response'
 
-# Needs to match the definitions in inc/CETxnMixGenerator.h.
-sd = '0'
-bv = '1'
-cp = '2'
-mw = '3'
-ts = '4'
-tl = '5'
-to = '6'
-tu = '7'
-mf = '8'
-tr = '9'
-dm = '10'
-tc = '11'
+sd <- 0
+bv <- 1
+cp <- 2
+mw <- 3
+ts <- 4
+tl <- 5
+to <- 6
+tu <- 7
+mf <- 8
+tr <- 9
+dm <- 10
+tc <- 11
 
-dataframe = dict()
-transaction_count = dict()
-rollback_count = dict()
-per90 = dict()
-average_rt = dict()
+transaction_name <- c("Security Detail", "Broker Volume", "Customer Position",
+                      "Market Watch", "Trade Status", "Trade Lookup",
+                      "Trade Order", "Trade Update", "Market Feed",
+                      "Trade Result", "Data Maintenance")
 
-invalid_count = dict()
-response_time = dict()
-rollback_count = dict()
-transaction_count = dict()
-warning_count = dict()
+transaction_list <- c(sd, bv, cp, mw, ts, tl, to, tu, mf, tr, dm, tc)
 
-r = robjects.r
-df = DataFrame.from_csvfile(filename, header=False)
-rampup_start = df[0][0]
+# Get the ctime after the START marker and the ctime before the first
+# TERMINATED marker.
+start <- df[1,]\$ctime
+total_txn <- nrow(df)
+end <- df[total_txn:total_txn,]\$ctime
 
-start_subset = r.subset(df, df.rx('V2').ro == "START")
-if start_subset.nrow == 0:
-    print ( 'START market not found in: %s' % filename )
-    sys.exit(1)
-steadystate_start = start_subset[0][0]
-steadystate_end = df[0][df.nrow - 1]
-steadystate = r.subset(df, df.rx('V1').ro > steadystate_start)
-if steadystate.nrow == 0:
-    print ( 'No data was collected during the steady state portion of the test.' )
-    sys.exit(1)
+duration = end - start
 
 # Don't count the Data Maintenance transaction towards the total.
-total_transaction_count = r.subset(steadystate,
-                                   steadystate.rx('V1').ro != int(dm)).nrow
+total_transaction_count <- nrow(subset(df, df\$txn != dm))
 
-transaction_list = [tr, bv, cp, mf, mw, sd, tl, to, ts, tu, dm]
+cat('                          Response Time\n')
+cat('                            (seconds)\n')
+cat(paste('Transaction       Mix %   Average:90th %  Total   Rollbacks    % ',
+          'Warning Invalid\n', sep=""))
+cat(paste('----------------- ------- --------------- ------- -------------- ',
+          '------- -------\n', sep=""))
 
-for key in transaction_list:
-    dataframe[key] = r.subset(steadystate, steadystate.rx('V2').ro == int(key))
-    transaction_count[key] = dataframe[key].nrow
-    if transaction_count[key] == 0:
-        rollback_count[key] = 0
-        invalid_count[key] = 0
-        warning_count[key] = 0
-        per90[key] = 0
-        average_rt[key] = 0
-        continue
-    rollback_count[key] = r.subset(dataframe[key],
-                                   dataframe[key].rx('V3').ro == 1).nrow
-    invalid_count[key] = r.subset(dataframe[key],
-                                  dataframe[key].rx('V3').ro < 0).nrow
-    warning_count[key] = r.subset(dataframe[key],
-                                  dataframe[key].rx('V3').ro > 1).nrow
-    per90[key] = r.quantile(dataframe[key].rx('V4')[0], .9)[0]
-    average_rt[key] = r.mean(dataframe[key].rx('V4'))[0]
-
-transaction_name = dict()
-transaction_name[to] = 'Trade Order'
-transaction_name[tr] = 'Trade Result'
-transaction_name[tl] = 'Trade Lookup'
-transaction_name[tu] = 'Trade Update'
-transaction_name[ts] = 'Trade Status'
-transaction_name[cp] = 'Customer Position'
-transaction_name[bv] = 'Broker Volume'
-transaction_name[sd] = 'Security Detail'
-transaction_name[mf] = 'Market Feed'
-transaction_name[mw] = 'Market Watch'
-transaction_name[dm] = 'Data Maintenance'
-
-print ( '%39s' % 'Response Time' )
-print ( '%37s' % '(seconds)' )
-print ( '%-17s       %% %s:%5s %% %7s %14s %7s %7s' % (
-        'Transaction', 'Average', '90th', 'Total', 'Rollbacks    %', 'Warning',
-        'Invalid') )
-print ( '----------------- ------- --------------- ------- -------------- ' \
-        '------- -------' )
-for key in [tr, bv, cp, mf, mw, sd, tl, to, ts, tu]:
-    try:
-        mix_percentage = \
-                float(transaction_count[key] - rollback_count[key]) / \
-                float(total_transaction_count) * 100.0
-    except:
-        mix_percentage = 0
-
-    try:
-        rollback_percentage = float(rollback_count[key]) / \
-                float(transaction_count[key]) * 100.0
-    except:
-        rollback_percentage = 0
-
-    print ( '%-17s %7.3f %7.3f:%7.3f %7d %6d %6.2f%% %7d %7d' % (
-            transaction_name[key],
-            mix_percentage,
-            average_rt[key],
-            per90[key],
-            transaction_count[key],
-            rollback_count[key],
-            rollback_percentage,
-            warning_count[key],
-            invalid_count[key]) )
-try:
-    rollback_percentage = float(rollback_count[dm]) / \
-            float(transaction_count[dm]) * 100.0
-except:
-    rollback_percentage = 0
-
-print ( '%-17s %7s %7.3f:%7.3f %7d %6d %6.2f%% %7d %7d' % (
-        transaction_name[dm],
-        'N/A',
-        average_rt[dm],
-        per90[dm],
-        transaction_count[dm],
-        rollback_count[dm],
-        rollback_percentage,
-        warning_count[dm],
-        invalid_count[dm]) )
-print ( '----------------- ------- --------------- ------- -------------- ' \
-        '------- -------' )
-
-duration = float(steadystate_end - steadystate_start)
-print ( '%0.2f trade-result transactions per second (trtps)' % \
-        (float(transaction_count[tr] - rollback_count[tr]) / duration) )
-print ( '%0.1f minute(s) to ramp up' % \
-        (float(steadystate_start - rampup_start) / 60.0) )
-print ( '%0.1f minute steady state duration' % (duration / 60.0) )
+for (key in 1:length(transaction_list) - 1) {
+  dataframe = subset(df, df\$txn == key - 1)
+  transaction_count <- nrow(dataframe)
+  if (transaction_count == 0) {
+    rollback_count <- 0
+    invalid_count <- 0
+    warning_count <- 0
+    per90 <- 0
+    average_rt <- 0
+    mix_percentage <- 0
+    rollback_percentage <- 0
+  } else {
+    rollback_count <- nrow(subset(dataframe, dataframe\$status == 1))
+    invalid_count <- nrow(subset(dataframe, dataframe\$status < 0))
+    warning_count <- nrow(subset(dataframe, dataframe\$status > 1))
+    per90 <- quantile(dataframe\$response, .9)
+    average_rt <- mean(dataframe\$response)
+    mix_percentage <- (transaction_count - rollback_count) /
+                      total_transaction_count * 100.0
+    rollback_percentage <- rollback_count / transaction_count * 100.0
+  }
+  if ((key - 1) == tr) {
+    transaction_count_tr <- transaction_count
+    rollback_count_tr <- rollback_count
+  }
+  if ((key - 1) == dm) {
+    cat(sprintf("%-17s     N/A %7.3f:%7.3f %7d %6d %6.2f%% %7d %7d\n",
+                transaction_name[key],
+                average_rt,
+                per90,
+                transaction_count,
+                rollback_count,
+                rollback_percentage,
+                warning_count,
+                invalid_count))
+  } else {
+    cat(sprintf("%-17s %7.3f %7.3f:%7.3f %7d %6d %6.2f%% %7d %7d\n",
+                transaction_name[key],
+                mix_percentage,
+                average_rt,
+                per90,
+                transaction_count,
+                rollback_count,
+                rollback_percentage,
+                warning_count,
+                invalid_count))
+  }
+}
+cat(paste('----------------- ------- --------------- ------- -------------- ',
+          '------- -------\n', sep=""))
+cat(sprintf("%0.2f trade-result transactions per second (trtps)\n",
+        (transaction_count_tr - rollback_count_tr) / duration))
+cmd <- "head ${MIXFILE}"
+df <- read.csv(pipe(cmd), header=F)
+colnames(df)[1] <- 'ctime'
+cat(sprintf("%0.1f minute(s) to ramp up\n",
+        (start - df[1,]\$ctime) / 60.0))
+cat(sprintf("%0.1f minute steady state duration\n", (duration / 60.0)))
+__EOF__

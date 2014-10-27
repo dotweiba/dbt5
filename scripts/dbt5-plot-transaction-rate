@@ -1,137 +1,93 @@
-#!/usr/bin/env python
-
+#!/bin/sh
 #
 # This file is released under the terms of the Artistic License.
 # Please see the file LICENSE, included in this package, for details.
 #
-# Copyright (C) 2010 Mark Wong
+# Copyright (C) 2010-2014 Mark Wong
+#               2014      2ndQuadrant, Ltd.
 #
 
-import sys
-from os import makedirs, system
-from os.path import exists, realpath
+if [ $# -ne 2 ]; then
+    echo "Create a plot the rate of transactions."
+    echo "usage: `basename $0` <mix.log> <output directory>"
+    echo
+    echo "    <mix.log> - full path to the mix.log file"
+    echo "    <output directory> - location to write output files"
+    echo
+    echo "Will attempt to create <output directory> if it does not exist."
+    exit 1
+fi
 
-import rpy2.robjects as robjects
-from rpy2.robjects.vectors import DataFrame
+INFILE=$1
+OUTDIR=$2
 
-if len(sys.argv) != 3:
-    print ( 'Create a plot the rate of transactions.' )
-    print ( 'usage: %s <mix.log> <output directory>' % sys.argv[0] )
-    print ( '' )
-    print ( '    <mix.log> - full path to the mix.log file' )
-    print ( '    <output directory> - location to write output files' )
-    print ( '' )
-    print ( 'Will attempt to create <output directory> if it does not exist.' )
-    sys.exit(1)
+if [ ! -f "${INFILE}" ]; then
+    echo "cannot open file: ${INFILE}"
+	exit 1
+fi
 
-infilename = sys.argv[1]
-outputdir = sys.argv[2]
+mkdir -p ${OUTDIR}
+if [ ! -d "${OUTDIR}" ]; then
+	echo "cannot create directory ${OUTDIR}"
+fi
 
-# Make sure the input file exists.
-if not exists(infilename):
-    print ( 'cannot open file: %s' % infilename )
-    sys.exit(1)
+R --slave --no-save << __EOF__
+# Is there an escape error in pipe()? It shouldn't print the START marker line
+# nor the TERMINATED line.
+cmd <- "sed -n '/START/,/TERMINATED/{/START|TERMINATED/!p}' ${INFILE}"
+df <- read.csv(pipe(cmd), header=F)
+df <- df[-1,]
+df <- df[-nrow(df),]
+total_txn <- nrow(df)
 
-# Make sure we can open the files to write to.
-if not exists(outputdir):
-    try:
-        # FIXME: Don't know why makedirs sometimes fails.
-        #makedirs(outputdir)
-        system('mkdir -p %s' % outputdir)
-    except:
-        print ( 'cannot create directory "%s"' % outputdir )
-        sys.exit(2)
+sd <- 0
+bv <- 1
+cp <- 2
+mw <- 3
+ts <- 4
+tl <- 5
+to <- 6
+tu <- 7
+mf <- 8
+tr <- 9
+dm <- 10
+tc <- 11
+transaction_list <- c(sd, bv, cp, mw, ts, tl, to, tu, mf, tr, dm)
 
-outputdir = realpath(outputdir)
+txn <- c("sd", "bv", "cp", "mw", "ts", "tl", "to", "tu", "mf", "tr", "dm")
+txn_name <- c("Security Detail", "Broker Volume", "Customer Position",
+              "Market Watch", "Trade Status", "Trade Lookup", "Trade Order",
+              "Trade Update", "Market Feed", "Trade Result", "Data Maintenance")
 
-r = robjects.r
+# Get the ctime after the START marker and the ctime before the first
+# TERMINATED marker.
+starttime <- df[1,]\$ctime
+endtime <- df[total_txn:total_txn,]\$ctime
 
-sample_length = 60
+color <- rainbow(length(txn_name))
 
-df = DataFrame.from_csvfile(infilename, header=False)
+colnames(df)[1] <- 'ctime'
+colnames(df)[2] <- 'txn'
+# This is really the transaction "status" column, but we're going to count the
+# number of occurances here.
+colnames(df)[3] <- 'count'
 
-starttime = df[0][0]
-endtime = df[0][df.nrow - 1]
-iterations = r.ceiling((endtime - starttime) / sample_length)[0]
+starttime = df[1,]\$ctime
 
-# Needs to match the definitions in inc/CETxnMixGenerator.h.
-sd = '0'
-bv = '1'
-cp = '2'
-mw = '3'
-ts = '4'
-tl = '5'
-to = '6'
-tu = '7'
-mf = '8'
-tr = '9'
-dm = '10'
-tc = '11'
+# Aggregate counts by into minutes.
+df\$ctime <- ceiling((df\$ctime - starttime) / 60)
+df <- aggregate(count ~ txn + ctime, df, length)
 
-transaction_name = dict()
-transaction_name[to] = 'Trade Order'
-transaction_name[tr] = 'Trade Result'
-transaction_name[tl] = 'Trade Lookup'
-transaction_name[tu] = 'Trade Update'
-transaction_name[ts] = 'Trade Status'
-transaction_name[cp] = 'Customer Position'
-transaction_name[bv] = 'Broker Volume'
-transaction_name[sd] = 'Security Detail'
-transaction_name[mf] = 'Market Feed'
-transaction_name[mw] = 'Market Watch'
-transaction_name[dm] = 'Data Maintenance'
-transaction_name[tc] = 'Trade Cleanup'
-
-j = 0
-for key in [sd, bv, cp, mw, ts, tl, to, tu, mf, tr, dm, tc]:
-    i = 0
-
-    # Create a list of data then pass it to R.
-    # TODO: Figure out how to append data to an R data frame instead of making
-    # Python lists and then generating the R data frame.  Then determine which
-    # way is better.
-    x = [0]
-    y = [0]
-
-    subset = r.subset(df, df.rx('V2').ro == key)
-    while i < iterations:
-        # Calculate 1 minute intervals starting from the first transaction
-        # response time.
-        istart = starttime + i * sample_length
-        iend = istart + sample_length
-
-        isubset = r.subset(subset, subset.rx('V1').ro >= istart)
-        if isubset.nrow == 0:
-            # Use 0 for the mean if there is no data.
-            y.append(0)
-        else:
-            isubset = r.subset(isubset, isubset.rx('V1').ro < iend)
-
-            # Calculate the number of transaction per interval by counting
-            # them.
-            y.append(float(isubset.nrow) / float(sample_length))
-
-        x.append(i + 1)
-
-        i += 1
-
-    # Set the data frame column names to default V1 and V2 values R would use
-    # for lack of better names.
-    data = {'V1': robjects.IntVector(x), 'V2': robjects.FloatVector(y)}
-    tmp_df = r['data.frame'](**data)
-
-    # Create the plots!
-    r.bitmap('%s/t%s-transaction-rate.png' % (outputdir, key),
-             type='png16m', units='px', width=1280, height=800, res=150, taa=4,
-             gaa=4)
-    xmax = r.max(tmp_df.rx(1))[0]
-    ymax = r.max(tmp_df.rx(2))[0]
-    color = r.rainbow(len(transaction_name))
-    r.plot(tmp_df[0], tmp_df[1], xlim=r.c(0, xmax), ylim=r.c(0, ymax),
-           type='b', col=color[j],
-           main='%s Transaction Rate' % transaction_name[key],
-           xlab='Elapsed Time (minutes)', ylab='Transactions per Second')
-    r.grid(col='gray')
-    r('dev.off()')
-
-    j += 1
+for (key in 1:length(transaction_list) - 1) {
+  bitmap(paste("${OUTDIR}/", txn[key + 1], "-transaction-rate.png", sep = ""),
+         type="png16m", units="px", width=1280, height=800, res=150, taa=4,
+         gaa=4)
+  dfsub <- subset(df, df\$txn == key)
+  plot(dfsub\$ctime, dfsub\$count, xlim=c(0, max(dfsub\$ctime)),
+       ylim=c(0, max(dfsub\$count)), type="b", col=color[key + 1],
+       main=paste(txn_name[key + 1], " Transaction Rate", sep=""),
+       xlab="Elapsed Time (minutes)", ylab="Transactions per Minute")
+  grid(col="gray")
+  invisible(dev.off())
+}
+__EOF__
