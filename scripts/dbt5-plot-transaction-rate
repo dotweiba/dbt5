@@ -74,9 +74,11 @@ colnames(df)[3] <- 'count'
 
 starttime = df[1,]\$ctime
 
-# Aggregate counts by into minutes.
-df\$ctime <- ceiling((df\$ctime - starttime) / 60)
+# Aggregate counts by second.
+df\$ctime <- ceiling(df\$ctime - starttime)
 df <- aggregate(count ~ txn + ctime, df, length)
+# But keep the x-axis in elapsed minutes.
+df\$ctime <- df\$ctime / 60
 
 for (key in 1:length(transaction_list) - 1) {
   bitmap(paste("${OUTDIR}/", txn[key + 1], "-transaction-rate.png", sep = ""),
@@ -86,7 +88,7 @@ for (key in 1:length(transaction_list) - 1) {
   plot(dfsub\$ctime, dfsub\$count, xlim=c(0, max(dfsub\$ctime)),
        ylim=c(0, max(dfsub\$count)), type="b", col=color[key + 1],
        main=paste(txn_name[key + 1], " Transaction Rate", sep=""),
-       xlab="Elapsed Time (minutes)", ylab="Transactions per Minute")
+       xlab="Elapsed Time (minutes)", ylab="Transactions per Second")
   grid(col="gray")
   invisible(dev.off())
 }

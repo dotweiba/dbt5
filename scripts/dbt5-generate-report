@@ -68,6 +68,8 @@ tr = '9'
 dm = '10'
 tc = '11'
 
+txn_tag = ('sd', 'bv', 'cp', 'mw', 'ts', 'tl', 'to', 'tu', 'mf', 'tr', 'dm', 'tc')
+
 transaction_name = dict()
 transaction_name[to] = 'Trade Order'
 transaction_name[tr] = 'Trade Result'
@@ -84,45 +86,21 @@ transaction_name[tc] = 'Trade Cleanup'
 
 print ( 'Generating transaction distribution charts...' )
 for key in [sd, bv, cp, mw, ts, tl, to, tu, mf, tr, dm, tc]:
-    system('dbt-plot-transaction-distribution "%s" %s %s %s/txn min 12 %d' % \
+    system('dbt-plot-transaction-distribution "%s" %s %s %s/txn %d' % \
             (transaction_name[key], key, mixfile, outdir, int(key) + 1))
-
-print ( 'Generating mpstat charts...' )
-mpstatfile = '%s/driver/mpstat.out' % indir
-if isfile(mpstatfile):
-    system('dbt-plot-mpstat %s %s/driver/mpstat' % (mpstatfile, outdir))
-
-mpstatfile = '%s/db/mpstat.out' % indir
-if isfile(mpstatfile):
-    system('dbt-plot-mpstat %s %s/db/mpstat' % (mpstatfile, outdir))
-
-print ( 'Generating iostat charts...' )
-iostatfile = '%s/driver/iostatx.out' % indir
-if isfile(iostatfile):
-    system('dbt-plot-iostat %s %s/driver/iostat %s' % \
-            (iostatfile, outdir, device_arg))
-
-iostatfile = '%s/db/iostatx.out' % indir
-if isfile(iostatfile):
-    system('dbt-plot-iostat %s %s/db/iostat %s' % \
-            (iostatfile, outdir, device_arg))
-
-print ( 'Generating vmstat charts...' )
-vmstatfile = '%s/driver/vmstat.out' % indir
-if isfile(vmstatfile):
-    system('dbt-plot-vmstat %s %s/driver/vmstat' % (vmstatfile, outdir))
-
-vmstatfile = '%s/db/vmstat.out' % indir
-if isfile(vmstatfile):
-    system('dbt-plot-vmstat %s %s/db/vmstat' % (vmstatfile, outdir))
 
 print ( 'Generating transaction rate charts...' )
 system('dbt5-plot-transaction-rate %s %s/txn' % (mixfile, outdir))
 
+print ( 'Generating operating system statistics charts...' )
+system('mkdir -p %s/db/os' % outdir)
+system('dbt-plot-sar-cpu %s/db/sar-cpu.csv %s/db/os' % (indir, outdir))
+system('dbt-plot-sar-blockdev %s/db/sar-blockdev.csv %s/db/os' % (indir, outdir))
+
 print ( 'Generating database statistics charts...' )
 if dbms == 'pgsql':
     system('dbt-pgsql-plot-database-stats ' \
-            '%s/db/pg_stat_databases.out %s %s/db' % (indir, dbname, outdir))
+            '%s/db/pg_stat_databases.csv %s %s/db' % (indir, dbname, outdir))
 
     # This relies on the scripts for PostgreSQL to generate these
     # table-list.txt and index-list.txt files.
@@ -135,7 +113,7 @@ if dbms == 'pgsql':
 
     if f is not None:
         for table in f:
-            system('dbt-pgsql-plot-table-stats %s/db/pg_stat_tables.out ' \
+            system('dbt-pgsql-plot-table-stats %s/db/pg_stat_tables.csv ' \
                     '%s %s/db/tables' % (indir, table.strip(), outdir))
         f.close()
 
@@ -148,7 +126,7 @@ if dbms == 'pgsql':
 
     if f is not None:
         for index in f:
-            system('dbt-pgsql-plot-index-stats %s/db/pg_stat_indexes.out ' \
+            system('dbt-pgsql-plot-index-stats %s/db/pg_stat_indexes.csv ' \
                     '%s %s/db/indexes' % (indir, index.strip(), outdir))
         f.close()
 
@@ -211,7 +189,7 @@ h.write('</tr>\n')
 h.write('</table>\n')
 h.write('</td>\n')
 h.write('<td>\n')
-chart = 'txn/t%s-transaction-rate.png' % tr
+chart = 'txn/tr-transaction-rate.png'
 h.write('<a href="%s"><img width="128" src="%s" height="96" />\n' % \
         (chart, chart))
 h.write('</td>\n')
@@ -262,7 +240,7 @@ for transaction in ['Security', 'Broker', 'Position', 'Watch', 'Status',
     h.write('<td>%s</td>\n' % c[7])
     h.write('<td>%s</td>\n' % c[8])
     h.write('<td>%s</td>\n' % c[9])
-    chart = 'txn/t%d-transaction-rate.png' % count
+    chart = 'txn/%s-transaction-rate.png' % txn_tag[count]
     h.write('<td align="center">\n')
     h.write('<a href="%s"><img width="128" src="%s" height="96" />\n' % \
             (chart, chart))
@@ -283,14 +261,16 @@ h.write('<caption>System Summary</caption>\n')
 h.write('<tr>\n')
 h.write('<td align="right">Operating System:</td>\n')
 
+system('mkdir -p %s/db' % outdir)
+
 file = '%s/db/readme.txt' % indir
 cmd = 'head -n 2 %s' % file
 p = Popen(cmd.split(), stdout=PIPE)
 c = p.communicate()[0].split('\n')
 c1 = c[0].split()
-c2 = c[1]
+c2 = c[1].split()
 settings = 'db/proc.txt'
-system('cp -p %s/db/proc.out %s/%s' % (indir, outdir, settings))
+system('cp -p %s/db/proc.txt %s/%s' % (indir, outdir, settings))
 h.write('<td>%s %s %s</td>\n' % (c1[0], c1[2], c1[11]))
 h.write('<td><a href="%s">Settings</a></td>\n' % settings)
 
@@ -298,9 +278,9 @@ h.write('</tr>\n')
 
 h.write('<tr>\n')
 h.write('<td align="right">Database Management System:</td>\n')
-h.write('<td>%s</td>\n' % c2)
+h.write('<td>%s %s</td>\n' % (c2[0], c2[1]))
 
-file1 = 'db/param.out'
+file1 = 'db/param.txt'
 if isfile('%s/%s' % (indir, file1)):
     file2 = 'db/param.txt'
     system('cp -p %s/%s %s/%s' % (indir, file1, outdir, file2))

@@ -226,6 +226,44 @@ validate_parameter()
 	fi
 }
 
+post_process_sar()
+{
+	# Sar data should be processed on the system they are collected on as sar
+	# versions can vary between systems and thus not be able to read another
+	# version's file.
+	COMMAND=""
+	FILE=${1}
+	HOST=${2}
+	if [ ! "x${HOST}" = "x" ] && [ ! "x${DB_HOSTNAME}" = "xlocalhost" ]; then
+		COMMAND="ssh ${HOST}"
+		${COMMAND} "which sadf > /dev/null" 2>&1
+		if [ $? -eq 0 ]; then
+			SADF="sadf -D"
+		else
+			SADF=true
+		fi
+		${COMMAND} "${SADF} -P ALL ${FILE} > `dirname ${FILE}`/sar-cpu.csv"
+		${COMMAND} "${SADF} ${FILE} -- -B > `dirname ${FILE}`/sar-paging.csv"
+		${COMMAND} "${SADF} ${FILE} -- -d -p > `dirname ${FILE}`/sar-blockdev.csv"
+		${COMMAND} "${SADF} ${FILE} -- -R > `dirname ${FILE}`/sar-mem1.csv"
+		${COMMAND} "${SADF} ${FILE} -- -r > `dirname ${FILE}`/sar-mem2.csv"
+		${COMMAND} "${SADF} ${FILE} -- -W > `dirname ${FILE}`/sar-swap.csv"
+	else
+		which sadf > /dev/null 2>&1
+		if [ $? -eq 0 ]; then
+			SADF="sadf -D"
+		else
+			SADF=true
+		fi
+		${SADF} -P ALL ${FILE} > `dirname ${FILE}`/sar-cpu.csv
+		${SADF} ${FILE} -- -B > `dirname ${FILE}`/sar-paging.csv
+		${SADF} ${FILE} -- -d -p > `dirname ${FILE}`/sar-blockdev.csv
+		${SADF} ${FILE} -- -R > `dirname ${FILE}`/sar-mem1.csv
+		${SADF} ${FILE} -- -r > `dirname ${FILE}`/sar-mem2.csv
+		${SADF} ${FILE} -- -W > `dirname ${FILE}`/sar-swap.csv
+	fi
+}
+
 if [ $# -eq 0 ]; then
 	usage
 	exit 1
@@ -421,9 +459,7 @@ if [ ! "x${DB_HOSTNAME}" = "x" ] && [ ! "x${DB_HOSTNAME}" = "xlocalhost" ]; then
 	DB_COMMAND="ssh ${DB_HOSTNAME}"
 	# Get the OS information from the database system.
 	${DB_COMMAND} dbt5-get-os-info -o ${DB_OUTPUT_DIR}
-	${DB_COMMAND} "uname -a >> ${DB_OUTPUT_DIR}/readme.txt"
 else
-	uname -a >> ${DB_OUTPUT_DIR}/readme.txt
 	dbt5-get-os-info -o ${DB_OUTPUT_DIR}
 fi
 
@@ -634,24 +670,10 @@ if [ ${USE_OPROFILE} -eq 1 ]; then
 	fi
 fi
 
-
-which sar > /dev/null 2>&1
-if [ $? -eq 0 ]; then
-	SAR=sar
-else
-	SAR=true
-fi
 if [ ! "x${DB_HOSTNAME}" = "x" ] && [ ! "x${DB_HOSTNAME}" = "xlocalhost" ]; then
-	${DB_COMMAND} "${SAR2} which sar > /dev/null 2>&1"
-	if [ $? -eq 0 ]; then
-		SAR2=sar
-	else
-		SAR2=true
-	fi
-	${SAR} -f ${DRIVER_OUTPUT_DIR}/sar_raw.out -A > ${DRIVER_OUTPUT_DIR}/sar.out
-	${DB_COMMAND} "${SAR2} -f ${DB_OUTPUT_DIR}/sar_raw.out -A > ${DB_OUTPUT_DIR}/sar.out"
+	post_process_sar ${DB_OUTPUT_DIR}/sar_raw.out ${DB_HOSTNAME}
 else
-	${SAR} -f ${DB_OUTPUT_DIR}/sar_raw.out -A > ${DRIVER_OUTPUT_DIR}/sar.out
+	post_process_sar ${DB_OUTPUT_DIR}/sar_raw.out
 fi
 
 if [ ! "x${DB_HOSTNAME}" = "x" ] && [ ! "x${DB_HOSTNAME}" = "xlocalhost" ]; then
