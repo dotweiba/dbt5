@@ -1,322 +1,232 @@
-#!/usr/bin/env python
+#!/bin/bash
 #
 # This file is released under the terms of the Artistic License.
 # Please see the file LICENSE, included in this package, for details.
 #
-# Copyright (C) 2010 Mark Wong & Open Source Development Labs, Inc.
-#               2006 Rilson Nascimento
+# Copyright (C) 2006-2010 Open Source Development Labs, Inc.
+#               2006      Rilson Nascimento
+#               2006-2014 Mark Wong
+#               2014      2ndQuadrant, Ltd.
 #
 
-# Because of the massive number of arguments we could have, use long-style only
-# options.
+# Using bash because of arrays.
 
-from optparse import OptionParser
-from os import system
-from os.path import isfile, realpath
-from subprocess import PIPE, Popen
-from re import sub
+usage()
+{
+    echo "usage: `basename $0` -d DBNAME"
+}
 
-parser = OptionParser(usage = 'usage: %prog --dbms <dbms> --i <dir> --o <dir> [options]')
-parser.add_option('--dbms', help = 'dbms used <pgsql>')
-parser.add_option('--dbname', help = 'dbname, for use with pgsql')
-parser.add_option('--devices',
-		help = 'comma delimited devices to plot (iostat)')
-parser.add_option('--i', help = 'dbt5 results directory')
-parser.add_option('--o', help = 'output directory')
-options, args = parser.parse_args()
+while getopts d:i:o: f; do
+    case $f in
+        d) DBNAME=$OPTARG;;
+        i) INDIR=$OPTARG;;
+        o) OUTDIR=$OPTARG;;
+        \?) usage; exit 1;;
+    esac
+done
 
-if not options.dbms:
-    parser.error('--dbms flag required')
-else:
-    # Validate supported dbms.
+if [ -z $INDIR ]; then
+    echo "Specify dbt5 results directory with -i"
+    usage
+    exit 1
+fi
 
-    dbms = options.dbms
-    if dbms == 'pgsql':
-        if not options.dbname:
-            parser.error('"--dbms pgsql" requires --dbname to be used')
-        else:
-            dbname = options.dbname
-    else:
-        parser.error('unrecognized dbms')
-        exit(1)
+if [ -z $OUTDIR ]; then
+    OUTDIR=$INDIR/report
+fi
 
-if not options.i:
-    parser.error('--i flag required')
+MIXFILE=$INDIR/driver/mix.log
+if [ ! -f $MIXFILE ]; then
+    echo "Missing file $MIXFILE"
+    exit 1
+fi
 
-if not options.o:
-    parser.error('--o flag required')
+read DBMS < $INDIR/dbms.txt
+echo "Generating report for $DBMS dbms"
 
-indir = realpath(options.i)
-outdir = realpath(options.o)
-mixfile = '%s/driver/mix.log' % indir
+TXNTAG=(sd bv cp mw ts tl to tu mf tr dm tc)
 
-device_arg = ''
-if options.devices:
-    device_arg = options.devices
+echo "Generating transaction distribution charts..."
+i=0
+# Order needs to match the definitions in inc/CETxnMixGenerator.h.
+for TXNNAME in "Security Detail" "Broker Volume" "Customer Position" \
+        "Market Watch" "Trade Status" "Trade Lookup" "Trade Order" \
+        "Trade Update" "Market Feed" "Trade Result" "Data Maintenance" \
+        "Trade Cleanup"; do
+    dbt-plot-transaction-distribution "$TXNNAME" $i $MIXFILE \
+            $OUTDIR/txn $(( $i + 1 ))
+    i=$(( $i + 1 ))
+done
 
-# Needs to match the definitions in inc/CETxnMixGenerator.h.
-sd = '0'
-bv = '1'
-cp = '2'
-mw = '3'
-ts = '4'
-tl = '5'
-to = '6'
-tu = '7'
-mf = '8'
-tr = '9'
-dm = '10'
-tc = '11'
+echo "Generating transaction rate charts..."
+dbt5-plot-transaction-rate $MIXFILE $OUTDIR/txn
 
-txn_tag = ('sd', 'bv', 'cp', 'mw', 'ts', 'tl', 'to', 'tu', 'mf', 'tr', 'dm', 'tc')
+echo "Generating operating system statistics charts..."
+OSOUTDIR=$OUTDIR/db/os
+mkdir -p $OSOUTDIR
+dbt-plot-sar-cpu $INDIR/db/sar-cpu.csv $OSOUTDIR
+dbt-plot-sar-blockdev $INDIR/db/sar-blockdev.csv $OSOUTDIR
 
-transaction_name = dict()
-transaction_name[to] = 'Trade Order'
-transaction_name[tr] = 'Trade Result'
-transaction_name[tl] = 'Trade Lookup'
-transaction_name[tu] = 'Trade Update'
-transaction_name[ts] = 'Trade Status'
-transaction_name[cp] = 'Customer Position'
-transaction_name[bv] = 'Broker Volume'
-transaction_name[sd] = 'Security Detail'
-transaction_name[mf] = 'Market Feed'
-transaction_name[mw] = 'Market Watch'
-transaction_name[dm] = 'Data Maintenance'
-transaction_name[tc] = 'Trade Cleanup'
+echo "Generating database statistics charts..."
+if [ "x$DBMS" = "xpgsql" ]; then
+    DBOUTDIR=$OUTDIR/db
+    dbt-pgsql-plot-database-stats $INDIR/db/pg_stat_databases.csv $DBT5DBNAME \
+            $DBOUTDIR
+fi
 
-print ( 'Generating transaction distribution charts...' )
-for key in [sd, bv, cp, mw, ts, tl, to, tu, mf, tr, dm, tc]:
-    system('dbt-plot-transaction-distribution "%s" %s %s %s/txn %d' % \
-            (transaction_name[key], key, mixfile, outdir, int(key) + 1))
+for table in `cat $INDIR/db/table-list.txt`; do
+    dbt-pgsql-plot-table-stats $INDIR/db/pg_stat_tables.csv $table \
+            $OUTDIR/db/tables 2> /dev/null
+done
+for index in `cat $INDIR/db/index-list.txt`; do
+    dbt-pgsql-plot-index-stats $INDIR/db/pg_stat_indexes.csv $index \
+            $OUTDIR/db/indexes 2> /dev/null
+done
 
-print ( 'Generating transaction rate charts...' )
-system('dbt5-plot-transaction-rate %s %s/txn' % (mixfile, outdir))
+README=$INDIR/readme.txt
+RESULTS=$INDIR/results.txt
 
-print ( 'Generating operating system statistics charts...' )
-system('mkdir -p %s/db/os' % outdir)
-system('dbt-plot-sar-cpu %s/db/sar-cpu.csv %s/db/os' % (indir, outdir))
-system('dbt-plot-sar-blockdev %s/db/sar-blockdev.csv %s/db/os' % (indir, outdir))
+DURATION=`grep Duration $README | cut -d " " -f 3`
+DURATION=$(( $DURATION / 60 ))
 
-print ( 'Generating database statistics charts...' )
-if dbms == 'pgsql':
-    system('dbt-pgsql-plot-database-stats ' \
-            '%s/db/pg_stat_databases.csv %s %s/db' % (indir, dbname, outdir))
+TRCHART=txn/tr-transaction-rate.png
 
-    # This relies on the scripts for PostgreSQL to generate these
-    # table-list.txt and index-list.txt files.
-    f = None
-    try:
-        f = open('%s/db/table-list.txt' % indir)
-    except:
-        print ( 'Cannot open table list to generate database table stats, ' \
-                'continuing...' )
+HTMLFILE=$OUTDIR/index.html
 
-    if f is not None:
-        for table in f:
-            system('dbt-pgsql-plot-table-stats %s/db/pg_stat_tables.csv ' \
-                    '%s %s/db/tables' % (indir, table.strip(), outdir))
-        f.close()
+cat << __EOF__ > $HTMLFILE
+<html>
+<head>
+<title>Database Test 5 Report</title>
+</head>
+<body>
+<h1>Database Test 5 Report</h1>
 
-    f = None
-    try:
-        f = open('%s/db/index-list.txt' % indir)
-    except:
-        print ( 'Cannot open index list to generate database index stats, ' \
-                'continuing...' )
+<p>
+`head -n 1 $README`
+</p>
 
-    if f is not None:
-        for index in f:
-            system('dbt-pgsql-plot-index-stats %s/db/pg_stat_indexes.csv ' \
-                    '%s %s/db/indexes' % (indir, index.strip(), outdir))
-        f.close()
+<table>
+<tr>
+<td>
 
-reportfile = '%s/index.html' % outdir
-try:
-    h = open(reportfile, 'w')
-except:
-    print ( 'Cannot open file: %s' % reportfile )
-    exit(3)
+<table>
+<caption>Results Summary</caption>
 
-h.write('<html>\n')
-h.write('<head>\n')
-h.write('<title>Database Test 5 Report</title>\n')
-h.write('</head>\n')
-h.write('<body>\n')
-h.write('<h1>Database Test 5 Report</h1>\n')
+<tr>
+<td align="right">Trade Result Transactions per Second:</td>
+<td>`grep trtps $RESULTS | cut -d " " -f 1`</td>
+</tr>
 
-h.write('<p>\n')
+<tr>
+<td align="right">Customers:</td>
+<td>`grep Customer $README | cut -d " " -f 4`</td>
+</tr>
 
-cmd = 'head -n 1 %s/readme.txt' % indir
-p = Popen(cmd.split(), stdout=PIPE)
-h.write(p.communicate()[0])
+<tr>
+<td align="right">Test Duration (minutes):</td>
+<td>$DURATION</td>
+</tr>
 
-h.write('</p>\n')
+</table>
+</td>
+<td>
+<a href="$TRCHART"><img width="128" src="$TRCHART" height="96" />
+</td>
+</tr>
 
-h.write('<table>\n')
+</table>
 
-h.write('<tr>\n')
-h.write('<td>\n')
-h.write('<table>\n')
-h.write('<caption>Results Summary</caption>\n')
+<table border=1>
+<caption>Transaction Summary</caption>
 
-h.write('<tr>\n')
-h.write('<td align="right">Trade Result Transactions per Second:</td>\n')
+<tr>
+<th colspan=2>Transaction</th>
+<th colspan=2>Response Time (seconds)</th>
+<th colspan=5></th>
+<th colspan=2>Charts</th>
+</tr>
 
-cmd = 'grep trtps %s/results.txt' % indir
-p = Popen(cmd.split(), stdout=PIPE)
-h.write('<td>%s</td>\n' % p.communicate()[0].split()[0])
+<tr>
+<th>Name</th>
+<th>Mix %</th>
+<th>Average</th>
+<th>90th %</th>
+<th>Total</th>
+<th>Rollbacks</th>
+<th>%</th>
+<th>Warnings</th>
+<th>Invalid</th>
+<th>Transaction Rate</th>
+<th>Response Time Distribution</th>
+</tr>
+__EOF__
 
-h.write('</tr>\n')
+i=0
+for transaction in Security Broker Position Watch Status Lookup Order Update \
+    Feed Result Data; do
+    line=(`grep $transaction $RESULTS`)
+    txnchart=txn/${TXNTAG[$i]}-transaction-rate.png
+    dischart=txn/t$i-distribution.png
+    cat << __EOF__ >> $HTMLFILE
+<tr>
+<td>${line[0]} ${line[1]}</td>
+<td>${line[2]}</td>
+<td>`echo ${line[3]} | sed -e 's/://'`</td>
+<td>${line[4]}</td>
+<td>${line[5]}</td>
+<td>${line[6]}</td>
+<td>`echo ${line[7]} | sed -e 's/\%//'`</td>
+<td>${line[8]}</td>
+<td>${line[9]}</td>
+<td align="center">
+<a href="$txnchart"><img width="128" src="$txnchart" height="96" />
+</td>
+<td align="center">
+<a href="$dischart"><img width="128" src="$dischart" height="96" />
+</td>
+</tr>
+__EOF__
+    i=$(( $i + 1 ))
+done
 
-h.write('<tr>\n')
-h.write('<td align="right">Customers:</td>\n')
+DBREADME=$INDIR/db/readme.txt
 
-cmd = 'grep Customer %s/readme.txt' % indir
-p = Popen(cmd.split(), stdout=PIPE)
-h.write('<td>%s</td>\n' % p.communicate()[0].split()[3])
+cp -p $INDIR/db/proc.txt $DBOUTDIR
+cp -p $INDIR/db/param.txt $DBOUTDIR
 
-h.write('</tr>\n')
+OSINFO=(`head -n 1 $DBREADME`)
+DBINFO=(`head -n 2 $DBREADME | tail -n 1`)
 
-h.write('<tr>\n')
-h.write('<td align="right">Test Duration (minutes):</td>\n')
+cat << __EOF__ >> $HTMLFILE
+</table>
 
-cmd = 'grep Duration %s/readme.txt' % indir
-p = Popen(cmd.split(), stdout=PIPE)
-h.write('<td>%0.1f</td>\n' % (float(p.communicate()[0].split()[2]) / 60.0))
+<table>
+<caption>System Summary</caption>
 
-h.write('</tr>\n')
+<tr>
+<td align="right">Operating System:</td>
+<td>${OSINFO[0]} ${OSINFO[2]} ${OSINFO[11]}</td>
+<td><a href="db/proc.txt">Settings</a></td>
+</tr>
 
-h.write('</table>\n')
-h.write('</td>\n')
-h.write('<td>\n')
-chart = 'txn/tr-transaction-rate.png'
-h.write('<a href="%s"><img width="128" src="%s" height="96" />\n' % \
-        (chart, chart))
-h.write('</td>\n')
-h.write('</tr>\n')
+<tr>
+<td align="right">Database Management System:</td>
+<td>${DBINFO[0]} ${DBINFO[1]}</td>
+<td><a href="db/param.txt">Settings</a></td>
+</tr>
 
-h.write('</table>\n')
+<td align="right">Notes:</td>
+<td>`head -n 2 $README | tail -n 1`</td>
 
-h.write('<table border=1>\n')
-h.write('<caption>Transaction Summary</caption>\n')
+</tr>
 
-h.write('<tr>\n')
-h.write('<th colspan=2>Transaction</th>\n')
-h.write('<th colspan=2>Response Time (seconds)</th>\n')
-h.write('<th colspan=5></th>\n')
-h.write('<th colspan=2>Charts</th>\n')
-h.write('</tr>\n')
+<tr>
+<td align="right">Database Charts:</td>
+<td><a href="db">View Directories</a></td>
+</tr>
 
-h.write('<tr>\n')
-h.write('<th>Name</th>\n')
-h.write('<th>Mix %</th>\n')
-h.write('<th>Average</th>\n')
-h.write('<th>90th %</th>\n')
-h.write('<th>Total</th>\n')
-h.write('<th>Rollbacks</th>\n')
-h.write('<th>%</th>\n')
-h.write('<th>Warnings</th>\n')
-h.write('<th>Invalid</th>\n')
-h.write('<th>Transaction Rate</th>\n')
-h.write('<th>Response Time Distribution</th>\n')
-h.write('</tr>\n')
+</table>
 
-count = 0
-for transaction in ['Security', 'Broker', 'Position', 'Watch', 'Status',
-        'Lookup', 'Order', 'Update', 'Feed', 'Result',  'Data']:
-    cmd = 'grep %s %s/results.txt' % (transaction, indir)
-    p = Popen(cmd.split(), stdout=PIPE)
-    c = sub(':', ' ', p.communicate()[0])
-    c = sub('%', ' ', c)
-    c = c.split()
-
-    h.write('<tr>\n')
-    h.write('<td>%s %s</td>\n' % (c[0], c[1]))
-    h.write('<td>%s</td>\n' % c[2])
-    h.write('<td>%s</td>\n' % c[3])
-    h.write('<td>%s</td>\n' % c[4])
-    h.write('<td>%s</td>\n' % c[5])
-    h.write('<td>%s</td>\n' % c[6])
-    h.write('<td>%s</td>\n' % c[7])
-    h.write('<td>%s</td>\n' % c[8])
-    h.write('<td>%s</td>\n' % c[9])
-    chart = 'txn/%s-transaction-rate.png' % txn_tag[count]
-    h.write('<td align="center">\n')
-    h.write('<a href="%s"><img width="128" src="%s" height="96" />\n' % \
-            (chart, chart))
-    h.write('</td>\n')
-    chart = 'txn/t%d-distribution.png' % count
-    h.write('<td align="center">\n')
-    h.write('<a href="%s"><img width="128" src="%s" height="96" />\n' % \
-            (chart, chart))
-    h.write('</td>\n')
-    h.write('</tr>\n')
-    count += 1
-
-h.write('</table>\n')
-
-h.write('<table>\n')
-h.write('<caption>System Summary</caption>\n')
-
-h.write('<tr>\n')
-h.write('<td align="right">Operating System:</td>\n')
-
-system('mkdir -p %s/db' % outdir)
-
-file = '%s/db/readme.txt' % indir
-cmd = 'head -n 2 %s' % file
-p = Popen(cmd.split(), stdout=PIPE)
-c = p.communicate()[0].split('\n')
-c1 = c[0].split()
-c2 = c[1].split()
-settings = 'db/proc.txt'
-system('cp -p %s/db/proc.txt %s/%s' % (indir, outdir, settings))
-h.write('<td>%s %s %s</td>\n' % (c1[0], c1[2], c1[11]))
-h.write('<td><a href="%s">Settings</a></td>\n' % settings)
-
-h.write('</tr>\n')
-
-h.write('<tr>\n')
-h.write('<td align="right">Database Management System:</td>\n')
-h.write('<td>%s %s</td>\n' % (c2[0], c2[1]))
-
-file1 = 'db/param.txt'
-if isfile('%s/%s' % (indir, file1)):
-    file2 = 'db/param.txt'
-    system('cp -p %s/%s %s/%s' % (indir, file1, outdir, file2))
-    h.write('<td><a href="%s">Settings</a></td>\n' % file2)
-
-file1 = 'db/plan0.out'
-if isfile('%s/%s' % (indir, file1)):
-    file2 = 'db/plan0.txt'
-    system('cp -p %s/%s %s/%s' % (indir, file1, outdir, file2))
-    h.write('<td><a href="%s">Query Plans</a></td>\n' % file2)
-
-h.write('</tr>\n')
-
-h.write('<tr>\n')
-
-file = '%s/readme.txt' % indir
-cmd = 'head -n 2 %s' % file
-p = Popen(cmd.split(), stdout=PIPE)
-c = p.communicate()[0].split('\n')
-
-h.write('<td align="right">Notes:</td>\n')
-h.write('<td>%s</td>\n' % c[1])
-
-h.write('</tr>\n')
-
-h.write('<tr>\n')
-h.write('<td align="right">Driver Charts:</td>\n')
-h.write('<td><a href="driver">View Directories</a></td>\n')
-h.write('</tr>\n')
-
-h.write('<tr>\n')
-h.write('<td align="right">Database Charts:</td>\n')
-h.write('<td><a href="db">View Directories</a></td>\n')
-h.write('</tr>\n')
-
-h.write('</table>\n')
-
-h.write('</body>\n')
-h.write('</html>\n')
+</body>
+</html>
+__EOF__

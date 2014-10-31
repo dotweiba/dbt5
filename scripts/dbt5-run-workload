@@ -1,11 +1,12 @@
-#!/bin/bash
-
+#!/bin/sh
 #
 # This file is released under the terms of the Artistic License.
 # Please see the file LICENSE, included in this package, for details.
 #
-# Copyright (C) 2006-2010 Mark Wong & Open Source Development Labs, Inc.
-#               2006 Rilson Nascimento
+# Copyright (C) 2006-2010 Open Source Development Labs, Inc.
+#               2006      Rilson Nascimento
+#               2006-2014 Mark Wong
+#               2014      2ndQuadrant, Ltd.
 #
 
 trap 'echo "Test was interrupted by Control-C."; \
@@ -444,6 +445,7 @@ if [ ! "x${DB_HOSTNAME}" = x ] && [ ! "x${DB_HOSTNAME}" = "xlocalhost" ]; then
 		${DB_HOSTNAME}:${DB_OUTPUT_DIR}/
 fi
 
+echo "${DBMS}" > ${OUTPUT_DIR}/dbms.txt
 # Create a readme file in the output directory and date it.
 date >> ${OUTPUT_DIR}/readme.txt
 echo "${COMMENT}" >> ${OUTPUT_DIR}/readme.txt
@@ -687,6 +689,7 @@ chmod 644 ${DB_OUTPUT_DIR}/log
 # Post processing of Database Statistics
 
 echo ">> Test completed."
+dbt5-generate-report -i $OUTPUT_DIR
 echo "Results are in: ${OUTPUT_DIR}"
 echo
 
