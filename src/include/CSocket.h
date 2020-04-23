@@ -12,6 +12,7 @@
 #ifndef SOCKET_H
 #define SOCKET_H
 
+#include <unistd.h>
 #include <netdb.h>
 #include <sys/types.h>
 #include <sys/socket.h>
