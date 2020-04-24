@@ -1,0 +1,9 @@
+export DBNAME="dbt5"
+export EGENDIR=/opt/dbt5/egen
+export DBT5TSDIR=/tmp/dbt5/
+
+export DBT5PGDATA=/tmp/dbt5/mydata
+# Path to initdb
+export PATH="$PATH:/usr/lib/postgresql/10/bin"
+
+export PORT=5433
