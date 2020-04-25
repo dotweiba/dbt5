@@ -9,7 +9,7 @@ sudo apt install -y postgresql-server-dev-all libpqxx-dev postgresql libpq-dev
 cd $basedir && cmake CMakeLists.txt -DDBMS=pgsql
 cd $basedir/egen/prj && make -f Makefile.pgsql
 cd $basedir/storedproc/pgsql/c && make && sudo make install
-cd $badedir && make && sudo make install
+cd $basedir && make && sudo make install
 
 # Copying to /opt/dbt5
 sudo cp -R $basedir/../dbt5/ /opt/
