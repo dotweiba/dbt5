@@ -4,7 +4,7 @@ basedir=`pwd`
 
 # Building & installing DBT5
 sudo apt update
-sudo apt-get install -y  build-essential autoconf
+sudo apt-get install -y  build-essential autoconf cmake
 sudo apt install -y postgresql-server-dev-all libpqxx-dev postgresql libpq-dev
 cd $basedir && cmake CMakeLists.txt -DDBMS=pgsql
 cd $basedir/egen/prj && make -f Makefile.pgsql
