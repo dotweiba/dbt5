@@ -1,4 +1,4 @@
-export DBNAME="dbt5"
+export DBT5DBNAME="dbt5"
 export EGENDIR=/opt/dbt5/egen
 export DBT5TSDIR=/tmp/dbt5/
 
