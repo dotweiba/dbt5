@@ -8,8 +8,8 @@
 #               2010 Mark Wong
 #
 
-LOGFILE="log"
-OUTDIR="."
+LOGFILE="dbt5.log"
+OUTDIR=${DBT5PGDATA}
 while getopts "fo:p:" OPT; do
 	case ${OPT} in
 	f)
