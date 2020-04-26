@@ -6,4 +6,4 @@ export DBT5PGDATA=/tmp/dbt5/mydata
 # Path to initdb
 export PATH="$PATH:/usr/lib/postgresql/10/bin"
 
-export PORT=5433
+export PGPORT=5433
