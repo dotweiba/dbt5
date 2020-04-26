@@ -2,6 +2,10 @@
 
 basedir=`pwd`
 
+# Installing DBTtools
+cd $basedir/.. && git clone https://github.com/mw2q/dbttools
+cd dbttools && cmake CMakeLists.txt && sudo make install DESTDIR=/usr/local
+
 # Building & installing DBT5
 sudo apt update
 sudo apt install -y build-essential autoconf cmake r-base bc sysstat ghostscript
