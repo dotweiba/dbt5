@@ -2,14 +2,15 @@
 
 basedir=`pwd`
 
+sudo apt update
+sudo apt install -y build-essential autoconf cmake r-base bc sysstat ghostscript
+sudo apt install -y postgresql-server-dev-all libpqxx-dev postgresql libpq-dev
+
 # Installing DBTtools
 cd $basedir/.. && git clone https://github.com/mw2q/dbttools
 cd dbttools && cmake CMakeLists.txt && sudo make install DESTDIR=/usr/local
 
 # Building & installing DBT5
-sudo apt update
-sudo apt install -y build-essential autoconf cmake r-base bc sysstat ghostscript
-sudo apt install -y postgresql-server-dev-all libpqxx-dev postgresql libpq-dev
 cd $basedir && cmake CMakeLists.txt -DDBMS=pgsql
 cd $basedir/egen/prj && make -f Makefile.pgsql
 cd $basedir/storedproc/pgsql/c && make && sudo make install

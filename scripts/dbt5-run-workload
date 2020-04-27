@@ -239,7 +239,7 @@ post_process_sar()
 		COMMAND="ssh ${HOST}"
 		${COMMAND} "which sadf > /dev/null" 2>&1
 		if [ $? -eq 0 ]; then
-			SADF="sadf -D"
+			SADF="sadf -d"
 		else
 			SADF=true
 		fi
@@ -252,7 +252,7 @@ post_process_sar()
 	else
 		which sadf > /dev/null 2>&1
 		if [ $? -eq 0 ]; then
-			SADF="sadf -D"
+			SADF="sadf -d"
 		else
 			SADF=true
 		fi
